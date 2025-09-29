@@ -3,6 +3,7 @@
 #include "vm/vm.h"
 
 #include "threads/malloc.h"
+#include "threads/vaddr.h"
 #include "vm/inspect.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -72,19 +73,30 @@ static bool page_less(const struct hash_elem *a, const struct hash_elem *b,
 }
 
 /* Find VA from spt and return page. On error, return NULL. */
-struct page *spt_find_page(struct supplemental_page_table *spt UNUSED,
-                           void *va UNUSED) {
+struct page *spt_find_page(struct supplemental_page_table *spt, void *va) {
   struct page *page = NULL;
-  /* TODO: Fill this function. */
 
+  void *key = pg_round_down(va);
+  struct page temp = {.va = key};
+  struct hash_elem *e =
+      hash_find(&spt->page_map, &((struct page *)&temp)->hash_elem);
+
+  if (e != NULL) {
+    page = hash_entry(e, struct page, hash_elem);
+  }
   return page;
 }
 
 /* Insert PAGE into spt with validation. */
-bool spt_insert_page(struct supplemental_page_table *spt UNUSED,
-                     struct page *page UNUSED) {
+bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
   int succ = false;
-  /* TODO: Fill this function. */
+
+  ASSERT(pg_ofs(page->va) == 0);  // va가 page aligned인지 확인
+
+  struct hash_elem *prev = hash_insert(&spt->page_map, &page->hash_elem);
+  if (prev == NULL) {
+    succ = true;
+  }
 
   return succ;
 }
