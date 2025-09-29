@@ -74,12 +74,13 @@ static bool page_less(const struct hash_elem *a, const struct hash_elem *b,
 
 /* Find VA from spt and return page. On error, return NULL. */
 struct page *spt_find_page(struct supplemental_page_table *spt, void *va) {
+  ASSERT(spt != NULL);
+
   struct page *page = NULL;
 
   void *key = pg_round_down(va);
   struct page temp = {.va = key};
-  struct hash_elem *e =
-      hash_find(&spt->page_map, &((struct page *)&temp)->hash_elem);
+  struct hash_elem *e = hash_find(&spt->page_map, &temp.hash_elem);
 
   if (e != NULL) {
     page = hash_entry(e, struct page, hash_elem);
@@ -89,10 +90,10 @@ struct page *spt_find_page(struct supplemental_page_table *spt, void *va) {
 
 /* Insert PAGE into spt with validation. */
 bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
-  int succ = false;
-
+  ASSERT(spt != NULL);
   ASSERT(pg_ofs(page->va) == 0);  // va가 page aligned인지 확인
 
+  bool succ = false;
   struct hash_elem *prev = hash_insert(&spt->page_map, &page->hash_elem);
   if (prev == NULL) {
     succ = true;
@@ -184,6 +185,8 @@ static bool vm_do_claim_page(struct page *page) {
 
 /* Initialize new supplemental page table */
 void supplemental_page_table_init(struct supplemental_page_table *spt) {
+  ASSERT(spt != NULL);
+
   hash_init(&spt->page_map, page_hash, page_less, NULL);
 }
 
