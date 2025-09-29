@@ -62,11 +62,6 @@ struct page {
   };
 };
 
-/* The representation of "Supplemental Page Table" */
-struct supplemental_page_table {
-  struct hash page_map;
-};
-
 /* The representation of "frame" */
 struct frame {
   void *kva;
@@ -92,7 +87,9 @@ struct page_operations {
 /* Representation of current process's memory space.
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
-struct supplemental_page_table {};
+struct supplemental_page_table {
+  struct hash page_map;
+};
 
 #include "threads/thread.h"
 void supplemental_page_table_init(struct supplemental_page_table *spt);
