@@ -812,10 +812,47 @@ static bool install_page(void* upage, void* kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+/* per-page context for lazy_load_segment() */
+struct segment_aux {
+  struct file* file;  // file_reopen(file)로 각 페이지가 독립 보유
+  off_t ofs;          // 이 페이지가 읽기 시작할 파일 오프셋
+  size_t read_bytes;  // 파일에서 실제로 읽을 바이트 수 (0..PGSIZE)
+  size_t zero_bytes;  // 나머지 0으로 채울 바이트 수 (PGSIZE - read_bytes)
+  bool writable;
+};
+
 static bool lazy_load_segment(struct page* page, void* aux) {
-  /* TODO: Load the segment from the file */
-  /* TODO: This called when the first page fault occurs on address VA. */
-  /* TODO: VA is available when calling this function. */
+  ASSERT(page != NULL);
+  ASSERT(page->frame != NULL);
+  ASSERT(aux != NULL);
+
+  struct segment_aux* aux_ = aux;
+  uint8_t* kva = page->frame->kva;
+
+  /* 파일에서 필요한 만큼만 읽기 */
+  if (aux_->read_bytes > 0) {
+    int n = file_read_at(aux_->file, kva, aux_->read_bytes, aux_->ofs);
+    if (n != (int)aux_->read_bytes) {
+      if (aux_->file) {
+        file_close(aux_->file);
+      }
+      free(aux);
+      return false;
+    }
+  }
+
+  /* 남은 영역 0으로 채우기 */
+  if (aux_->zero_bytes > 0) {
+    memset(kva + aux_->read_bytes, 0, aux_->zero_bytes);
+  }
+
+  /* 이 페이지 전용 자원 정리 */
+  if (aux_->file) {
+    file_close(aux_->file);
+  }
+  free(aux);
+
+  return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -846,16 +883,37 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage,
     size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
     size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-    /* TODO: Set up aux to pass information to the lazy_load_segment. */
-    void* aux = NULL;
-    if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
-                                        lazy_load_segment, aux))
+    /* Set up aux to pass information to the lazy_load_segment. */
+    struct segment_aux* aux = malloc(sizeof *aux);
+    if (aux == NULL) {
       return false;
+    }
+
+    aux->file =
+        file_reopen(file);  // 각 페이지가 자기 핸들 보유 (해제 책임도 각자)
+    aux->ofs = ofs;
+    aux->read_bytes = page_read_bytes;
+    aux->zero_bytes = page_zero_bytes;
+    aux->writable = writable;
+
+    if (aux->file == NULL) {
+      free(aux);
+      return false;
+    }
+
+    /* UNINIT 엔트리 등록 */
+    if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
+                                        lazy_load_segment, aux)) {
+      file_close(aux->file);
+      free(aux);
+      return false;
+    }
 
     /* Advance. */
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
     upage += PGSIZE;
+    ofs += page_read_bytes;
   }
   return true;
 }
