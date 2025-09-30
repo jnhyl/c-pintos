@@ -133,8 +133,15 @@ static struct frame *vm_evict_frame(void) {
  * memory is full, this function evicts the frame to get the available memory
  * space.*/
 static struct frame *vm_get_frame(void) {
-  struct frame *frame = NULL;
-  /* TODO: Fill this function. */
+  void *kva = palloc_get_page(PAL_USER);
+  if (kva == NULL) {
+    PANIC("TODO: Implement frame eviction");
+  }
+  /* TODO: palloc 실패 시 처리 */
+
+  struct frame *frame = malloc(sizeof(struct frame));
+  frame->kva = kva;
+  frame->page = NULL;
 
   ASSERT(frame != NULL);
   ASSERT(frame->page == NULL);
