@@ -191,7 +191,10 @@ static bool vm_do_claim_page(struct page *page) {
 void supplemental_page_table_init(struct supplemental_page_table *spt) {
   ASSERT(spt != NULL);
 
-  hash_init(&spt->page_map, page_hash, page_less, NULL);
+  bool success = hash_init(&spt->page_map, page_hash, page_less, NULL);
+  if (!success) {
+    PANIC("hash_init failed in supplemental_page_table_init");
+  }
 }
 
 /* Copy supplemental page table from src to dst */
