@@ -156,17 +156,19 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   struct page *page = NULL;
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
-  // PF_P = 1, 권한 위반 : 복구 불가
-  if (!not_present) {
-    return false;
-  }
+  // 잘못된 주소 접근
+  if (!addr || !is_user_vaddr(addr)) return false;
+
+  // writing read-only page (exception.c, page_fault 함수 참고)
+  if (!not_present) return false;
 
   // spt에서 가상 주소 addr이 포함된 페이지 찾기
-  // 현재는 스택 영역 따로 식별 안 함 -> 스택 성장을 위해 향후 식별 필요
+  // stack growth 미고려
   page = spt_find_page(spt, addr);
-  if (page == NULL) {
-    return false;
-  }
+  if (page == NULL) return false;
+
+  // writing read-only page (not_present page 매핑 이후 확인)
+  if (write && !page->writable) return false;
 
   return vm_do_claim_page(page);
 }
