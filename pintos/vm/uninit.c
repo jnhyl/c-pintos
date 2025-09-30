@@ -7,13 +7,12 @@
  * initialization callback that passed from vm_alloc_page_with_initializer
  * function.
  * */
-
-#include "vm/uninit.h"
-
 #include "vm/vm.h"
 
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
+
+#include "vm/uninit.h"
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations uninit_ops = {
