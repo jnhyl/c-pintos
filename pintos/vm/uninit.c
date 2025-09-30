@@ -63,15 +63,23 @@ static bool uninit_initialize(struct page *page, void *kva) {
  * exit, which are never referenced during the execution.
  * PAGE will be freed by the caller. */
 static void uninit_destroy(struct page *page) {
-  struct uninit_page *uninit UNUSED = &page->uninit;
+  struct uninit_page *uninit = &page->uninit;
   /* aux를 lazy에서 free 했으면 여기서 할 일 없음 */
 
   /*
    * uninit page가 한 번도 fault가 나지 않고 프로세스 종료로 uninit_destroy()가
    * 호출되는 경우 lazy_load_segment()가 실행되지 않으니 aux가 해제되지 않은 채
-   * 남을 수 있음.
+   * 남을 수 있음. */
+  if(uninit->aux != NULL)
+  {
+    struct segment_aux* aux = uninit->aux;
+    if (aux->file)
+    {
+      file_close(aux->file);
+    }
+    free(aux);
+    uninit->aux = NULL;
+  }
 
-   * TODO: aux != NULL이면 정리하는 로직 추가
-   * TODO: 지금은 aux의 설계가 팀원과 논의되지 않아 해제 불가 */
   return;
 }

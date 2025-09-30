@@ -812,15 +812,6 @@ static bool install_page(void* upage, void* kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-/* per-page context for lazy_load_segment() */
-struct segment_aux {
-  struct file* file;  // file_reopen(file)로 각 페이지가 독립 보유
-  off_t ofs;          // 이 페이지가 읽기 시작할 파일 오프셋
-  size_t read_bytes;  // 파일에서 실제로 읽을 바이트 수 (0..PGSIZE)
-  size_t zero_bytes;  // 나머지 0으로 채울 바이트 수 (PGSIZE - read_bytes)
-  bool writable;
-};
-
 static bool lazy_load_segment(struct page* page, void* aux) {
   ASSERT(page != NULL);
   ASSERT(page->frame != NULL);
