@@ -91,7 +91,11 @@ struct page *spt_find_page(struct supplemental_page_table *spt, void *va) {
 /* Insert PAGE into spt with validation. */
 bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
   ASSERT(spt != NULL);
+  ASSERT(page != NULL);
   ASSERT(pg_ofs(page->va) == 0);  // va가 page aligned인지 확인
+
+  // 같은 주소에 대해 중복 삽입이 발생하는 상황에 현재는 조용한 실패. ASSERT가
+  // 필요한가?
 
   bool succ = false;
   struct hash_elem *prev = hash_insert(&spt->page_map, &page->hash_elem);
@@ -187,7 +191,10 @@ static bool vm_do_claim_page(struct page *page) {
 void supplemental_page_table_init(struct supplemental_page_table *spt) {
   ASSERT(spt != NULL);
 
-  hash_init(&spt->page_map, page_hash, page_less, NULL);
+  bool success = hash_init(&spt->page_map, page_hash, page_less, NULL);
+  if (!success) {
+    PANIC("hash_init failed in supplemental_page_table_init");
+  }
 }
 
 /* Copy supplemental page table from src to dst */
