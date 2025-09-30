@@ -5,6 +5,8 @@
 #include "threads/malloc.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
+#include "vm/anon.h"
+#include "vm/file.h"
 #include "vm/inspect.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -45,17 +47,50 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage,
                                     bool writable, vm_initializer *init,
                                     void *aux) {
   ASSERT(VM_TYPE(type) != VM_UNINIT)
+  ASSERT(pg_ofs(upage) == 0);  // upage의 psize aligned 여부 확인
 
   struct supplemental_page_table *spt = &thread_current()->spt;
+  bool (*initializer)(struct page *, enum vm_type, void *);
+
+  // 해당 페이지가 존재하면
+  if (spt_find_page(spt, upage) != NULL) return false;
 
   /* Check wheter the upage is already occupied or not. */
   if (spt_find_page(spt, upage) == NULL) {
     /* TODO: Create the page, fetch the initialier according to the VM type,
      * TODO: and then create "uninit" page struct by calling uninit_new. You
      * TODO: should modify the field after calling the uninit_new. */
+    struct page *page = malloc(sizeof(struct page));
+    if (page == NULL) return false;
+
+    switch (VM_TYPE(type)) {
+      case VM_ANON:
+        initializer = anon_initializer;
+        break;
+      case VM_FILE:
+        initializer = file_backed_initializer;
+        break;
+      // case VM_PAGE_CACHE: /* for project 4 */
+      default:
+        free(page);
+        goto err;
+    }
+
+    // page 초기화
+    uninit_new(page, upage, init, type, aux, initializer);
+
+    // page.writable 초기화
+    page->writable = writable;
 
     /* TODO: Insert the page into the spt. */
+    if (!spt_insert_page(spt, page)) {
+      // destroy(page); /* free page, 타입별 destroy 함수 구현 필요 */
+      free(page);
+      goto err;
+    }
+    return true;
   }
+
 err:
   return false;
 }
