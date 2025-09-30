@@ -3,6 +3,7 @@
 #include "vm/vm.h"
 
 #include "threads/malloc.h"
+#include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "vm/inspect.h"
 
@@ -155,6 +156,17 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   struct page *page = NULL;
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
+  // PF_P = 1, 권한 위반 : 복구 불가
+  if (!not_present) {
+    return false;
+  }
+
+  // spt에서 가상 주소 addr이 포함된 페이지 찾기
+  // 현재는 스택 영역 따로 식별 안 함 -> 스택 성장을 위해 향후 식별 필요
+  page = spt_find_page(spt, addr);
+  if (page == NULL) {
+    return false;
+  }
 
   return vm_do_claim_page(page);
 }
@@ -170,6 +182,12 @@ void vm_dealloc_page(struct page *page) {
 bool vm_claim_page(void *va UNUSED) {
   struct page *page = NULL;
   /* TODO: Fill this function */
+  struct supplemental_page_table *spt = &thread_current()->spt;
+
+  page = spt_find_page(spt, va);
+  if (page == NULL) {
+    return false;
+  }
 
   return vm_do_claim_page(page);
 }
@@ -183,6 +201,8 @@ static bool vm_do_claim_page(struct page *page) {
   page->frame = frame;
 
   /* TODO: Insert page table entry to map page's VA to frame's PA. */
+  uint64_t *pml4 = thread_current()->pml4;
+  pml4_set_page(pml4, page->va, frame->kva, page->writable);
 
   return swap_in(page, frame->kva);
 }
