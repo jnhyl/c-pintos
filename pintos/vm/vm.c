@@ -133,8 +133,15 @@ static struct frame *vm_evict_frame(void) {
  * memory is full, this function evicts the frame to get the available memory
  * space.*/
 static struct frame *vm_get_frame(void) {
-  struct frame *frame = NULL;
-  /* TODO: Fill this function. */
+  void *kva = palloc_get_page(PAL_USER);
+  if (kva == NULL) {
+    PANIC("TODO: Implement frame eviction");
+  }
+  /* TODO: palloc 실패 시 처리 */
+
+  struct frame *frame = malloc(sizeof(struct frame));
+  frame->kva = kva;
+  frame->page = NULL;
 
   ASSERT(frame != NULL);
   ASSERT(frame->page == NULL);
@@ -167,9 +174,12 @@ void vm_dealloc_page(struct page *page) {
 }
 
 /* Claim the page that allocate on VA. */
-bool vm_claim_page(void *va UNUSED) {
-  struct page *page = NULL;
-  /* TODO: Fill this function */
+bool vm_claim_page(void *va) {
+  struct page *page = spt_find_page(&thread_current()->spt, va);
+
+  if (page == NULL) {
+    return false;
+  }
 
   return vm_do_claim_page(page);
 }
@@ -183,8 +193,22 @@ static bool vm_do_claim_page(struct page *page) {
   page->frame = frame;
 
   /* TODO: Insert page table entry to map page's VA to frame's PA. */
+  if (!swap_in(page, frame->kva)) {
+    page->frame = NULL;
+    palloc_free_page(frame->kva);
+    free(frame);
+    return false;
+  }
 
-  return swap_in(page, frame->kva);
+  if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva,
+                     page->writable)) {
+    page->frame = NULL;
+    palloc_free_page(frame->kva);
+    free(frame);
+    return false;
+  }
+
+  return true;
 }
 
 /* Initialize new supplemental page table */
