@@ -218,12 +218,6 @@ void vm_dealloc_page(struct page *page) {
 bool vm_claim_page(void *va UNUSED) {
   struct page *page = NULL;
   /* TODO: Fill this function */
-  struct supplemental_page_table *spt = &thread_current()->spt;
-
-  page = spt_find_page(spt, va);
-  if (page == NULL) {
-    return false;
-  }
 
   return vm_do_claim_page(page);
 }
@@ -237,8 +231,6 @@ static bool vm_do_claim_page(struct page *page) {
   page->frame = frame;
 
   /* TODO: Insert page table entry to map page's VA to frame's PA. */
-  uint64_t *pml4 = thread_current()->pml4;
-  pml4_set_page(pml4, page->va, frame->kva, page->writable);
 
   return swap_in(page, frame->kva);
 }
