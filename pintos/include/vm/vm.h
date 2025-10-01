@@ -49,6 +49,7 @@ struct page {
 
   /* Your implementation */
   struct hash_elem hash_elem;  // SPT의 entry
+  bool writable;               // true : write & read, false : read-only
 
   /* Per-type data are binded into the union.
    * Each function automatically detects the current union */
