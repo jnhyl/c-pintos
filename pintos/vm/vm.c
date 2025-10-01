@@ -3,7 +3,6 @@
 #include "vm/vm.h"
 
 #include "threads/malloc.h"
-#include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "vm/anon.h"
 #include "vm/file.h"
