@@ -70,11 +70,9 @@ static void uninit_destroy(struct page *page) {
    * uninit page가 한 번도 fault가 나지 않고 프로세스 종료로 uninit_destroy()가
    * 호출되는 경우 lazy_load_segment()가 실행되지 않으니 aux가 해제되지 않은 채
    * 남을 수 있음. */
-  if(uninit->aux != NULL)
-  {
-    struct segment_aux* aux = uninit->aux;
-    if (aux->file)
-    {
+  if (uninit->aux != NULL) {
+    struct segment_aux *aux = uninit->aux;
+    if (aux->file) {
       file_close(aux->file);
     }
     free(aux);
