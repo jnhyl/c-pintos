@@ -270,7 +270,75 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-                                  struct supplemental_page_table *src UNUSED) {}
+                                  struct supplemental_page_table *src UNUSED) {
+  supplemental_page_table_init(dst);
+
+  struct hash_iterator it;
+  hash_first(&it, &src->page_map);
+  while (hash_next(&it)) {
+    struct hash_elem *e = hash_cur(&it);
+    struct page *p = hash_entry(e, struct page, hash_elem);
+
+    void *va = p->va;
+    bool writable = p->writable;
+
+    if (VM_TYPE(p->operations->type) == VM_UNINIT) {
+      /* 1) UNINIT Page */
+
+      struct segment_aux *aux_src = p->uninit.aux;
+
+      /* aux 깊은 복사 */
+      struct segment_aux *aux_dst = malloc(sizeof *aux_dst);
+      if (aux_dst == NULL) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      aux_dst->file = file_reopen(aux_src->file);
+      if (aux_dst->file == NULL) {
+        free(aux_dst);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      aux_dst->ofs = aux_src->ofs;
+      aux_dst->read_bytes = aux_src->read_bytes;
+      aux_dst->zero_bytes = aux_src->zero_bytes;
+      aux_dst->writable = aux_src->writable;
+
+      if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, p->uninit.init,
+                                          aux_dst)) {
+        file_close(aux_dst->file);
+        free(aux_dst);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+    } else if (page_get_type(p) == VM_ANON) {
+      /* 2) 이미 적재된 ANON 페이지 */
+
+      /* 부모가 swap/evict 미구현 단계라면 frame은 있어야 정상 */
+      ASSERT(p->frame != NULL);
+
+      if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, NULL, NULL)) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      if (!vm_claim_page(va)) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      struct page *child_p = spt_find_page(dst, va);
+      memcpy(child_p->frame->kva, p->frame->kva, PGSIZE);
+    } else {
+      // 지금 단계 (FILE/swap 미지원): 해당 타입 안 나와야 함
+      ASSERT(false);
+    }
+  }
+
+  return true;
+}
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
