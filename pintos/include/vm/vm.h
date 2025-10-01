@@ -92,6 +92,15 @@ struct supplemental_page_table {
   struct hash page_map;
 };
 
+/* per-page context for lazy_load_segment() */
+struct segment_aux {
+  struct file *file;  // file_reopen(file)로 각 페이지가 독립 보유
+  off_t ofs;          // 이 페이지가 읽기 시작할 파일 오프셋
+  size_t read_bytes;  // 파일에서 실제로 읽을 바이트 수 (0..PGSIZE)
+  size_t zero_bytes;  // 나머지 0으로 채울 바이트 수 (PGSIZE - read_bytes)
+  bool writable;
+};
+
 #include "threads/thread.h"
 void supplemental_page_table_init(struct supplemental_page_table *spt);
 bool supplemental_page_table_copy(struct supplemental_page_table *dst,
