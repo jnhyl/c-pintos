@@ -4,6 +4,8 @@
 
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "vm/anon.h"
+#include "vm/file.h"
 #include "vm/inspect.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -44,17 +46,49 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage,
                                     bool writable, vm_initializer *init,
                                     void *aux) {
   ASSERT(VM_TYPE(type) != VM_UNINIT)
+  ASSERT(pg_ofs(upage) == 0);  // upage의 psize aligned 여부 확인
 
   struct supplemental_page_table *spt = &thread_current()->spt;
+  bool (*initializer)(struct page *, enum vm_type, void *);
+
+  // 해당 페이지가 존재하면
+  if (spt_find_page(spt, upage) != NULL) return false;
 
   /* Check wheter the upage is already occupied or not. */
   if (spt_find_page(spt, upage) == NULL) {
     /* TODO: Create the page, fetch the initialier according to the VM type,
      * TODO: and then create "uninit" page struct by calling uninit_new. You
      * TODO: should modify the field after calling the uninit_new. */
+    struct page *page = malloc(sizeof(struct page));
+    if (page == NULL) return false;
+
+    switch (VM_TYPE(type)) {
+      case VM_ANON:
+        initializer = anon_initializer;
+        break;
+      case VM_FILE:
+        initializer = file_backed_initializer;
+        break;
+      // case VM_PAGE_CACHE: /* for project 4 */
+      default:
+        free(page);
+        goto err;
+    }
+
+    // page 초기화
+    uninit_new(page, upage, init, type, aux, initializer);
+
+    // page.writable 초기화
+    page->writable = writable;
 
     /* TODO: Insert the page into the spt. */
+    if (!spt_insert_page(spt, page)) {
+      vm_dealloc_page(page);
+      goto err;
+    }
+    return true;
   }
+
 err:
   return false;
 }
@@ -133,8 +167,15 @@ static struct frame *vm_evict_frame(void) {
  * memory is full, this function evicts the frame to get the available memory
  * space.*/
 static struct frame *vm_get_frame(void) {
-  struct frame *frame = NULL;
-  /* TODO: Fill this function. */
+  void *kva = palloc_get_page(PAL_USER);
+  if (kva == NULL) {
+    PANIC("TODO: Implement frame eviction");
+  }
+  /* TODO: palloc 실패 시 처리 */
+
+  struct frame *frame = malloc(sizeof(struct frame));
+  frame->kva = kva;
+  frame->page = NULL;
 
   ASSERT(frame != NULL);
   ASSERT(frame->page == NULL);
@@ -155,6 +196,19 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   struct page *page = NULL;
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
+  // 잘못된 주소 접근
+  if (!addr || !is_user_vaddr(addr)) return false;
+
+  // writing read-only page (exception.c, page_fault 함수 참고)
+  if (!not_present) return false;
+
+  // spt에서 가상 주소 addr이 포함된 페이지 찾기
+  // stack growth 미고려
+  page = spt_find_page(spt, addr);
+  if (page == NULL) return false;
+
+  // writing read-only page (not_present page 매핑 이후 확인)
+  if (write && !page->writable) return false;
 
   return vm_do_claim_page(page);
 }
@@ -167,9 +221,12 @@ void vm_dealloc_page(struct page *page) {
 }
 
 /* Claim the page that allocate on VA. */
-bool vm_claim_page(void *va UNUSED) {
-  struct page *page = NULL;
-  /* TODO: Fill this function */
+bool vm_claim_page(void *va) {
+  struct page *page = spt_find_page(&thread_current()->spt, va);
+
+  if (page == NULL) {
+    return false;
+  }
 
   return vm_do_claim_page(page);
 }
@@ -183,8 +240,22 @@ static bool vm_do_claim_page(struct page *page) {
   page->frame = frame;
 
   /* TODO: Insert page table entry to map page's VA to frame's PA. */
+  if (!swap_in(page, frame->kva)) {
+    page->frame = NULL;
+    palloc_free_page(frame->kva);
+    free(frame);
+    return false;
+  }
 
-  return swap_in(page, frame->kva);
+  if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva,
+                     page->writable)) {
+    page->frame = NULL;
+    palloc_free_page(frame->kva);
+    free(frame);
+    return false;
+  }
+
+  return true;
 }
 
 /* Initialize new supplemental page table */
