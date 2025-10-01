@@ -141,6 +141,8 @@ bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+  ASSERT(spt && page);
+  hash_delete(&spt->page_map, &page->hash_elem);
   vm_dealloc_page(page);
   return true;
 }
@@ -272,8 +274,17 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
                                   struct supplemental_page_table *src UNUSED) {}
 
+void hash_action_destroy(struct hash_elem *e, void *aux UNUSED) {
+  ASSERT(e != NULL);
+  struct page *page = hash_entry(e, struct page, hash_elem);
+  ASSERT(page != NULL);
+  vm_dealloc_page(page);
+}
+
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
   /* TODO: Destroy all the supplemental_page_table hold by thread and
    * TODO: writeback all the modified contents to the storage. */
+  ASSERT(spt);
+  hash_clear(&spt->page_map, hash_action_destroy);
 }
