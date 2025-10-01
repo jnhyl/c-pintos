@@ -84,8 +84,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage,
 
     /* TODO: Insert the page into the spt. */
     if (!spt_insert_page(spt, page)) {
-      // destroy(page); /* free page, 타입별 destroy 함수 구현 필요 */
-      free(page);
+      vm_dealloc_page(page);
       goto err;
     }
     return true;
