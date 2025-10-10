@@ -51,6 +51,9 @@ struct page {
   struct hash_elem hash_elem;  // SPT의 entry
   bool writable;               // true : write & read, false : read-only
 
+  // page 소유 스레드 표기
+  struct thread *owner;
+
   /* Per-type data are binded into the union.
    * Each function automatically detects the current union */
   union {
