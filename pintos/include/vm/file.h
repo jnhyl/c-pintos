@@ -8,7 +8,7 @@
 
 struct page;
 enum vm_type;
-
+//머지 전이면 커밋 전에 내용 지우기
 struct file_page {
   struct file *file;
   off_t ofs;
