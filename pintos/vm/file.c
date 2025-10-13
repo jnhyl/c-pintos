@@ -32,12 +32,23 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	struct file_page *file_page UNUSED = &page->file;
+  off_t file_size = file_read_at(file_page->file, kva, file_page->read_bytes, file_page->ofs);
+  if(file_size != file_page->read_bytes) return false;
+  if(memset(kva+file_page->read_bytes, 0, file_page->zero_bytes) == kva+file_page->read_bytes) {
+    return true;
+  } else return false;
 }
 
 /* Swap out the page by writeback contents to the file. */
 static bool
 file_backed_swap_out (struct page *page) {
 	struct file_page *file_page UNUSED = &page->file;
+
+  bool is_dirty = pml4_is_dirty(page->owner->pml4, page->va);
+  // if(!is_dirty){
+  //   do_munmap()
+  // }
+
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
