@@ -20,6 +20,7 @@
 #include "threads/vaddr.h"
 #include "userprog/gdt.h"
 #include "userprog/process.h"
+#include "vm/vm.h"
 
 #define FDT_SIZE 512
 typedef int pid_t;
@@ -62,6 +63,9 @@ void syscall_init(void) {
 /* The main system call interface */
 void syscall_handler(struct intr_frame* f UNUSED) {
   int syscall_number = (int)f->R.rax;
+#ifdef VM
+  thread_current()->user_rsp = f->rsp;
+#endif
 
   switch (syscall_number) {
     case SYS_HALT: {
@@ -307,14 +311,15 @@ int read(int fd, void* buffer, unsigned size) {
   for (void* page = start_page; page <= end_page; page += PGSIZE) {
     struct page* p = spt_find_page(&curr->spt, page);
     if (p == NULL) {
-      exit(-1);
-    }
-
-    // 아직 메모리에 없으면 claim
-    if (p->frame == NULL) {
-      if (!vm_claim_page(page)) {
+      // 스택 접근일 경우 페이지 폴트에서 처리
+      if (is_stack_addr(page, thread_current()->user_rsp)) {
+        continue;
+      } else {
         exit(-1);
       }
+    }
+    if (p && !p->writable) {
+      exit(-1);
     }
   }
 
@@ -326,7 +331,9 @@ int read(int fd, void* buffer, unsigned size) {
     }
     bytes_read = size;
   } else {
+    lock_acquire(&filesys_lock);
     bytes_read = file_read(file, buffer, size);
+    lock_release(&filesys_lock);
   }
 
   return bytes_read;
