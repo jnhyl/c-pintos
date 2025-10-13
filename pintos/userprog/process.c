@@ -386,6 +386,10 @@ int process_exec(void* f_name) {
   // 2.4) 인자 전달 (스택은 load 함수에서 이미 설정됨)
   setup_arguments(&_if, argc, argv);
 
+#ifdef VM
+  thread_current()->user_rsp = _if.rsp;
+#endif
+
   /* 메모리 해제 : file_name 메모리 해제 */
   // palloc_free_page(file_name);
   palloc_free_page(file_name_cpy);
