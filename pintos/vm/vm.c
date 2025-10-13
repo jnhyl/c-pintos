@@ -325,22 +325,10 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
         supplemental_page_table_kill(dst);
         return false;
       }
-
-      aux_dst->file = file_reopen(aux_src->file);
-      if (aux_dst->file == NULL) {
-        free(aux_dst);
-        supplemental_page_table_kill(dst);
-        return false;
-      }
-
-      aux_dst->ofs = aux_src->ofs;
-      aux_dst->read_bytes = aux_src->read_bytes;
-      aux_dst->zero_bytes = aux_src->zero_bytes;
-      aux_dst->writable = aux_src->writable;
+      *aux_dst = *aux_src;
 
       if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, p->uninit.init,
                                           aux_dst)) {
-        file_close(aux_dst->file);
         free(aux_dst);
         supplemental_page_table_kill(dst);
         return false;

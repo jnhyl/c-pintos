@@ -828,25 +828,17 @@ static bool lazy_load_segment(struct page* page, void* aux) {
   if (aux_->read_bytes > 0) {
     int n = file_read_at(aux_->file, kva, aux_->read_bytes, aux_->ofs);
     if (n != (int)aux_->read_bytes) {
-      if (aux_->file) {
-        file_close(aux_->file);
-      }
-      free(aux);
+      free(aux_);
       return false;
     }
   }
 
-  /* 남은 영역 0으로 채우기 */
   if (aux_->zero_bytes > 0) {
     memset(kva + aux_->read_bytes, 0, aux_->zero_bytes);
   }
 
   /* 이 페이지 전용 자원 정리 */
-  if (aux_->file) {
-    file_close(aux_->file);
-  }
-  free(aux);
-
+  free(aux_);
   return true;
 }
 
@@ -883,23 +875,15 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage,
     if (aux == NULL) {
       return false;
     }
-
-    aux->file =
-        file_reopen(file);  // 각 페이지가 자기 핸들 보유 (해제 책임도 각자)
+    aux->file = file;
     aux->ofs = ofs;
     aux->read_bytes = page_read_bytes;
     aux->zero_bytes = page_zero_bytes;
     aux->writable = writable;
 
-    if (aux->file == NULL) {
-      free(aux);
-      return false;
-    }
-
     /* UNINIT 엔트리 등록 */
     if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
                                         lazy_load_segment, aux)) {
-      file_close(aux->file);
       free(aux);
       return false;
     }
