@@ -311,12 +311,14 @@ int read(int fd, void* buffer, unsigned size) {
   for (void* page = start_page; page <= end_page; page += PGSIZE) {
     struct page* p = spt_find_page(&curr->spt, page);
     if (p == NULL) {
-      exit(-1);
+      // 스택 접근일 경우 페이지 폴트에서 처리
+      if (is_stack_addr(page, thread_current()->user_rsp)) {
+        continue;
+      } else {
+        exit(-1);
+      }
     }
     if (p && !p->writable) {
-      exit(-1);
-    }
-    if (!is_user_vaddr(page)) {
       exit(-1);
     }
   }
