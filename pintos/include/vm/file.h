@@ -3,17 +3,11 @@
 #include "filesys/file.h"
 #include "vm/vm.h"
 #include "threads/thread.h"
-#include "threads/mmu.h"
-#include "lib/kernel/hash.h"
 
 struct page;
 enum vm_type;
-//머지 전이면 커밋 전에 내용 지우기
+
 struct file_page {
-  struct file *file;
-  off_t ofs;
-  size_t read_bytes;
-  size_t zero_bytes;
 };
 
 void vm_file_init (void);
