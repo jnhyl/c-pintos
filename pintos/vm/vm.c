@@ -325,10 +325,23 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
         supplemental_page_table_kill(dst);
         return false;
       }
-      *aux_dst = *aux_src;
 
-      if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, p->uninit.init,
+      enum vm_type t = p->uninit.type;
+      *aux_dst = *aux_src;
+      if (VM_TYPE(t) == VM_FILE) {
+        aux_dst->file = file_reopen(aux_src->file);
+        if (aux_dst->file == NULL) {
+          free(aux_dst);
+          supplemental_page_table_kill(dst);
+          return false;
+        }
+      }
+
+      if (!vm_alloc_page_with_initializer(t, va, writable, p->uninit.init,
                                           aux_dst)) {
+        if (VM_TYPE(t) == VM_FILE && aux_dst->file != NULL) {
+          file_close(aux_dst->file);
+        }
         free(aux_dst);
         supplemental_page_table_kill(dst);
         return false;
@@ -351,9 +364,37 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
 
       struct page *child_p = spt_find_page(dst, va);
       memcpy(child_p->frame->kva, p->frame->kva, PGSIZE);
+    } else if (page_get_type(p) == VM_FILE) {
+      /* 3) FILE 페이지 분기 */
+      struct segment_aux *aux = malloc(sizeof *aux);
+      if (aux == NULL) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      // aux deep copy (핸들은 reopen)
+      aux->file = file_reopen(p->file.file);  // 독립 핸들
+      aux->ofs = p->file.ofs;
+      aux->read_bytes = p->file.read_bytes;
+      aux->zero_bytes = p->file.zero_bytes;
+      aux->writable = writable;
+      if (aux->file == NULL) {
+        free(aux);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      // 자식 SPT에 UNINIT + file_backed_initializer로 등록
+      if (!vm_alloc_page_with_initializer(VM_FILE, va, writable,
+                                          file_backed_initializer, aux)) {
+        file_close(aux->file);
+        free(aux);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
     } else {
-      // 지금 단계 (FILE/swap 미지원): 해당 타입 안 나와야 함
-      ASSERT(false);
+      supplemental_page_table_kill(dst);
+      return false;
     }
   }
 
