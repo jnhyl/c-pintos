@@ -128,6 +128,7 @@ struct thread {
 #ifdef VM
   /* Table for whole virtual memory owned by thread. */
   struct supplemental_page_table spt;
+  void *user_rsp;  // 사용자 -> 커널 전환 시 유저 스택 포인터를 저장할 멤버 변수
 #endif
 
   /* Owned by thread.c. */
@@ -143,8 +144,8 @@ struct thread {
 extern struct list sleep_list;  // sleep 상태인 스레드들을 담는 리스트
 
 #define FDT_SIZE 512  // 파일 디스크립터 테이블 최대 크기
-#define STDIN_MARKER  ((struct file*)1)
-#define STDOUT_MARKER ((struct file*)2)
+#define STDIN_MARKER ((struct file *)1)
+#define STDOUT_MARKER ((struct file *)2)
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

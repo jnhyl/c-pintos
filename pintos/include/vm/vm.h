@@ -42,9 +42,11 @@ struct thread;
  * This is kind of "parent class", which has four "child class"es, which are
  * uninit_page, file_page, anon_page, and page cache (project4).
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
+
 struct page {
   const struct page_operations *operations;
   void *va;            /* Address in terms of user space */
+  void *vma;
   struct frame *frame; /* Back reference for frame */
 
   /* Your implementation */
