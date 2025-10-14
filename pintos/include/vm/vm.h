@@ -42,14 +42,19 @@ struct thread;
  * This is kind of "parent class", which has four "child class"es, which are
  * uninit_page, file_page, anon_page, and page cache (project4).
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
+
 struct page {
   const struct page_operations *operations;
   void *va;            /* Address in terms of user space */
+  void *vma;
   struct frame *frame; /* Back reference for frame */
 
   /* Your implementation */
   struct hash_elem hash_elem;  // SPT의 entry
   bool writable;               // true : write & read, false : read-only
+
+  // page 소유 스레드 표기
+  struct thread *owner;
 
   /* Per-type data are binded into the union.
    * Each function automatically detects the current union */
@@ -113,8 +118,6 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page);
 void vm_init(void);
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user,
                          bool write, bool not_present);
-
-bool is_stack_addr(void *addr, void *rsp);
 
 #define vm_alloc_page(type, upage, writable) \
   vm_alloc_page_with_initializer((type), (upage), (writable), NULL, NULL)
