@@ -9,6 +9,12 @@
 #include "vm/file.h"
 #include "vm/inspect.h"
 
+// 프레임테이블, 카운트와 인덱스 전역 선언
+#define FRAME_TABLE_SIZE 3072
+static struct frame *frame_table[FRAME_TABLE_SIZE];
+static size_t frame_count = 0;
+static size_t clock_hand = 0;
+
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void vm_init(void) {
@@ -150,19 +156,41 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 
 /* Get the struct frame, that will be evicted. */
 static struct frame *vm_get_victim(void) {
-  struct frame *victim = NULL;
-  /* TODO: The policy for eviction is up to you. */
+  while (true) {
+    struct frame *victim = frame_table[clock_hand];
 
-  return victim;
+    // page 설정 시까지 시간차 존재, 혹시 모를 예외처리
+    ASSERT(victim != NULL);
+    ASSERT(victim->page != NULL);
+
+    // accessed bit 확인하고 1이면 0으로 변경
+    if (pml4_is_accessed(victim->page->owner->pml4, victim->page->va)) {
+      pml4_set_accessed(victim->page->owner->pml4, victim->page->va, false);
+    } else {
+      return victim;
+    }
+
+    clock_hand = (clock_hand + 1) % frame_count;
+  }
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *vm_evict_frame(void) {
-  struct frame *victim UNUSED = vm_get_victim();
-  /* TODO: swap out the victim and return the evicted frame. */
+  struct frame *victim = vm_get_victim();
 
-  return NULL;
+  // 스왑 아웃
+  swap_out(victim->page);
+
+  // 페이지 테이블 매핑 제거
+  pml4_clear_page(victim->page->owner->pml4, victim->page->va);
+
+  // 연결 끊기
+  victim->page->frame = NULL;
+  victim->page = NULL;
+
+  // frame은 빈 상태로, 재활용 가능
+  return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -171,17 +199,23 @@ static struct frame *vm_evict_frame(void) {
  * space.*/
 static struct frame *vm_get_frame(void) {
   void *kva = palloc_get_page(PAL_USER);
+
   if (kva == NULL) {
-    PANIC("TODO: Implement frame eviction");
+    return vm_evict_frame();
   }
-  /* TODO: palloc 실패 시 처리 */
 
   struct frame *frame = malloc(sizeof(struct frame));
+  if (frame == NULL) {
+    palloc_free_page(kva);
+    return NULL;
+  }
+
   frame->kva = kva;
   frame->page = NULL;
 
-  ASSERT(frame != NULL);
-  ASSERT(frame->page == NULL);
+  ASSERT(frame_count < FRAME_TABLE_SIZE);
+  frame_table[frame_count++] = frame;
+
   return frame;
 }
 

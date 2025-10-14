@@ -1,10 +1,9 @@
 #ifndef VM_FILE_H
 #define VM_FILE_H
 #include "filesys/file.h"
-#include "vm/vm.h"
-#include "threads/thread.h"
-#include "threads/mmu.h"
 #include "lib/kernel/hash.h"
+#include "threads/mmu.h"
+#include "vm/vm.h"
 
 struct page;
 enum vm_type;
@@ -17,9 +16,9 @@ struct file_page {
 };
 
 struct mmap_region {
-  void* base; // 매핑 시작 주소 (page-aligned)
+  void *base;     // 매핑 시작 주소 (page-aligned)
   size_t npages;  // 매핑된 총 페이지 수
-  struct file* file;
+  struct file *file;
   struct list_elem elem;
 };
 
