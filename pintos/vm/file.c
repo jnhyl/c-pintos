@@ -52,6 +52,7 @@ file_backed_swap_out (struct page *page) {
   }
   do_munmap(page->vma);
 
+  return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
