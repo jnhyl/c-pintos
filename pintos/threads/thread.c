@@ -667,6 +667,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
 
 #ifdef VM
   t->user_rsp = NULL;
+  list_init(&t->mmaps);
 #endif
 }
 

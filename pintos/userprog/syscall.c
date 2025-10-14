@@ -45,6 +45,8 @@ static struct lock filesys_lock;
 int exec(const char* cmd_line);
 pid_t fork(const char* thread_name, struct intr_frame* if_);
 int wait(pid_t pid);
+void* mmap(void* addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void* addr);
 int dup2(int oldfd, int newfd);
 
 #define MSR_STAR 0xc0000081         /* Segment selector msr */
@@ -128,6 +130,25 @@ void syscall_handler(struct intr_frame* f UNUSED) {
     case SYS_WAIT: {
       pid_t pid = (pid_t)f->R.rdi;
       f->R.rax = wait(pid);
+      break;
+    }
+    case SYS_MMAP: {
+      void* addr = (void*)f->R.rdi;
+      size_t length = (size_t)f->R.rsi;
+      int writable = (int)f->R.rdx;
+      int fd = (int)f->R.r10;
+      off_t offset = (off_t)f->R.r8;
+
+      void* ret = mmap(addr, length, writable, fd, offset);
+      f->R.rax = (uint64_t)ret;
+      break;
+    }
+    case SYS_MUNMAP: {
+      void* addr = (void*)f->R.rdi;
+      if (addr && pg_ofs(addr) == 0) {
+        do_munmap(addr);
+      }
+      f->R.rax = 0;
       break;
     }
     case SYS_DUP2: {
@@ -515,6 +536,51 @@ pid_t fork(const char* thread_name, struct intr_frame* if_) {
 }
 
 int wait(pid_t pid) { return process_wait(pid); }
+
+void* mmap(void* addr, size_t length, int writable, int fd, off_t offset) {
+  if (!addr || addr != pg_round_down(addr)) {
+    return NULL;
+  }
+
+  if (offset != pg_round_down(offset)) {
+    return NULL;
+  }
+
+  if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length)) {
+    return NULL;
+  }
+
+  if (spt_find_page(&thread_current()->spt, addr)) {
+    return NULL;
+  }
+
+  // [FD 유효성] 0, 1(콘솔) 및 범위 밖 FD 거부
+  if (fd < 2 || fd >= FDT_SIZE) {
+    return NULL;
+  }
+
+  // [파일 핸들 존재] FDT에 유효한 file* 이어야 함
+  struct thread* curr = thread_current();
+  struct file* file = curr->fdt[fd];
+  if (file == NULL) {
+    return NULL;
+  }
+
+  // [파일/길이 실질 유효성] 빈 파일 또는 비양수 길이 매핑 금지
+  if (file_length(file) == 0 || (int)length <= 0) {
+    return NULL;
+  }
+
+  // 실제 매핑은 do_mmap에서 수행
+  return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap(void* addr) {
+  if (addr == NULL || pg_ofs(addr) != 0) {
+    return;
+  }
+  do_munmap(addr);
+}
 
 int dup2(int oldfd, int newfd) {
   if (oldfd < 0 || oldfd >= FDT_SIZE) return -1;
