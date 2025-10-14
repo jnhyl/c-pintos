@@ -150,7 +150,7 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
   ASSERT(spt && page);
   hash_delete(&spt->page_map, &page->hash_elem);
   vm_dealloc_page(page);
-  return true;
+  return;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -218,8 +218,29 @@ static struct frame *vm_get_frame(void) {
   return frame;
 }
 
+/* 스택 주소인지 체크 */
+bool is_stack_addr(void *addr, void *rsp) {
+  // 잘못된 주소(NULL, 커널 가상 주소) 접근
+  if (!addr || !is_user_vaddr(addr)) return false;
+
+  // 유저 스택 주소가 아닌 경우
+  if (addr >= USER_STACK) return false;
+
+  // 유저 스택 범위를 넘어간 경우(스택 오버 플로우)
+  if (pg_round_down(addr) < USER_STACK - MAX_STACK_SIZE) return false;
+
+  // x86-64, PUSH 명령어에 의한 경우를 제외하고 스택 포인터를 벗어난 접근
+  if (addr < rsp - 8) return false;
+
+  return true;
+}
+
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static void vm_stack_growth(void *addr UNUSED) {
+  void *upage = pg_round_down(addr);
+
+  vm_alloc_page(VM_ANON | VM_MARKER_0, upage, true);
+}
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {}
@@ -230,6 +251,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
                          bool not_present UNUSED) {
   struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
   struct page *page = NULL;
+  void *rsp = user ? f->rsp : thread_current()->user_rsp;
+
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
   // 잘못된 주소 접근
@@ -239,9 +262,16 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   if (!not_present) return false;
 
   // spt에서 가상 주소 addr이 포함된 페이지 찾기
-  // stack growth 미고려
   page = spt_find_page(spt, addr);
-  if (page == NULL) return false;
+  if (page == NULL) {
+    if (is_stack_addr(addr, rsp)) {
+      vm_stack_growth(addr);
+      page = spt_find_page(spt, addr);
+      ASSERT(page != NULL);
+    } else {
+      return false;
+    }
+  }
 
   // writing read-only page (not_present page 매핑 이후 확인)
   if (write && !page->writable) return false;
