@@ -4,6 +4,7 @@
 
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "userprog/process.h"
 #include "vm/anon.h"
 #include "vm/file.h"
 #include "vm/inspect.h"
@@ -365,12 +366,14 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
       struct page *child_p = spt_find_page(dst, va);
       memcpy(child_p->frame->kva, p->frame->kva, PGSIZE);
     } else if (page_get_type(p) == VM_FILE) {
-      /* 3) FILE 페이지 분기 */
+      /* 3) 원본이 이미 적재된 FILE */
+
       struct segment_aux *aux = malloc(sizeof *aux);
       if (aux == NULL) {
         supplemental_page_table_kill(dst);
         return false;
       }
+      printf("spt_copy(): %p\n", p->file.file);
 
       // aux deep copy (핸들은 reopen)
       aux->file = file_reopen(p->file.file);  // 독립 핸들
@@ -386,12 +389,14 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
 
       // 자식 SPT에 UNINIT + file_backed_initializer로 등록
       if (!vm_alloc_page_with_initializer(VM_FILE, va, writable,
-                                          file_backed_initializer, aux)) {
+                                          lazy_load_segment, aux)) {
         file_close(aux->file);
         free(aux);
         supplemental_page_table_kill(dst);
         return false;
       }
+
+      continue;
     } else {
       supplemental_page_table_kill(dst);
       return false;

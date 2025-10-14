@@ -816,7 +816,8 @@ static bool install_page(void* upage, void* kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool lazy_load_segment(struct page* page, void* aux) {
+// static bool lazy_load_segment(struct page* page, void* aux) {
+bool lazy_load_segment(struct page* page, void* aux) {
   ASSERT(page != NULL);
   ASSERT(page->frame != NULL);
   ASSERT(aux != NULL);

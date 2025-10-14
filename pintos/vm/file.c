@@ -6,6 +6,11 @@ static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
 static void file_backed_destroy(struct page *page);
 
+#include "threads/mmu.h"
+#include "threads/vaddr.h"
+#include "userprog/process.h"
+#include "vm/file.h"
+
 /* DO NOT MODIFY this struct */
 static const struct page_operations file_ops = {
     .swap_in = file_backed_swap_in,
@@ -35,7 +40,6 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
   file_page->zero_bytes = aux->zero_bytes;
   page->writable = aux->writable;
 
-  free(aux);
   return true;
 }
 
@@ -53,12 +57,107 @@ static bool file_backed_swap_out(struct page *page) {
 static void file_backed_destroy(struct page *page) {
   struct file_page *file_page UNUSED = &page->file;
 
-  /* region-shared file handle: closed in do_munmap(). Nothing to free here */
+  struct thread *t = thread_current();
+  if (page->frame) {
+    pml4_clear_page(t->pml4, page->va);
+    page->frame->page = NULL;
+
+    palloc_free_page(page->frame->kva);
+    free(page->frame);
+  }
 }
 
 /* Do the mmap */
 void *do_mmap(void *addr, size_t length, int writable, struct file *file,
-              off_t offset) {}
+              off_t offset) {
+  ASSERT(addr != NULL);
+  ASSERT(pg_ofs(addr) == 0);
+  ASSERT(offset % PGSIZE == 0);
+
+  struct file *fp = file_reopen(file);
+  if (fp == NULL) {
+    return NULL;
+  }
+
+  uint8_t *start_addr = addr;
+  size_t total_page_count = (length + PGSIZE - 1) / PGSIZE;
+  off_t flen = file_length(fp);
+  size_t read_bytes = (flen < length) ? flen : length;
+  size_t zero_bytes = PGSIZE - (read_bytes % PGSIZE);
+
+  while (read_bytes > 0 || zero_bytes > 0) {
+    size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+    struct segment_aux *aux = malloc(sizeof *aux);
+    if (aux == NULL) {
+      file_close(fp);
+      return NULL;
+    }
+
+    aux->file = fp;
+    aux->ofs = offset;
+    aux->read_bytes = page_read_bytes;
+    aux->zero_bytes = page_zero_bytes;
+
+    if (!vm_alloc_page_with_initializer(VM_FILE, addr, writable,
+                                        lazy_load_segment, aux)) {
+      free(aux);
+      file_close(fp);
+      return NULL;
+    }
+
+    read_bytes -= page_read_bytes;
+    zero_bytes -= page_zero_bytes;
+    addr += PGSIZE;
+    offset += page_read_bytes;
+  }
+
+  return start_addr;
+}
+
+static struct mmap_region *mmap_find_region(struct thread *t, void *base) {
+  struct list_elem *e;
+  for (e = list_begin(&t->mmaps); e != list_end(&t->mmaps); e = list_next(e)) {
+    struct mmap_region *rg = list_entry(e, struct mmap_region, elem);
+    if (rg->base == base) {
+      return rg;
+    }
+  }
+  return NULL;
+}
 
 /* Do the munmap */
-void do_munmap(void *addr) {}
+void do_munmap(void *va) {
+  struct thread *t = thread_current();
+  struct mmap_region *rg = mmap_find_region(t, va);
+  if (rg == NULL) {
+    return;
+  }
+
+  uint8_t *up = (uint8_t *)rg->base;
+
+  for (size_t i = 0; i < rg->npages; i++, up += PGSIZE) {
+    struct page *p = spt_find_page(&t->spt, up);
+    if (p == NULL) {
+      continue;
+    }
+
+    if (VM_TYPE(page_get_type(p)) == VM_FILE && p->frame != NULL) {
+      bool dirty = pml4_is_dirty(t->pml4, p->va);
+      if (dirty) {
+        size_t n = p->file.read_bytes;
+        if (n > 0) {
+          file_write_at(rg->file, p->frame->kva, n, p->file.ofs);
+        }
+        pml4_set_dirty(t->pml4, p->va, false);
+      }
+    }
+
+    spt_remove_page(&t->spt, p);
+  }
+
+  file_close(rg->file);
+  list_remove(&rg->elem);
+  free(rg);
+}

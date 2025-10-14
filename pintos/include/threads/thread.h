@@ -129,6 +129,7 @@ struct thread {
   /* Table for whole virtual memory owned by thread. */
   struct supplemental_page_table spt;
   void *user_rsp;  // 사용자 -> 커널 전환 시 유저 스택 포인터를 저장할 멤버 변수
+  struct list mmaps;  // 이 스레드의 mmap region 리스트
 #endif
 
   /* Owned by thread.c. */
