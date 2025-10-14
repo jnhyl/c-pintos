@@ -4,6 +4,7 @@
 
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "userprog/process.h"
 #include "vm/anon.h"
 #include "vm/file.h"
 #include "vm/inspect.h"
@@ -141,8 +142,10 @@ bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+  ASSERT(spt && page);
+  hash_delete(&spt->page_map, &page->hash_elem);
   vm_dealloc_page(page);
-  return true;
+  return;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -182,8 +185,29 @@ static struct frame *vm_get_frame(void) {
   return frame;
 }
 
+/* 스택 주소인지 체크 */
+bool is_stack_addr(void *addr, void *rsp) {
+  // 잘못된 주소(NULL, 커널 가상 주소) 접근
+  if (!addr || !is_user_vaddr(addr)) return false;
+
+  // 유저 스택 주소가 아닌 경우
+  if (addr >= USER_STACK) return false;
+
+  // 유저 스택 범위를 넘어간 경우(스택 오버 플로우)
+  if (pg_round_down(addr) < USER_STACK - MAX_STACK_SIZE) return false;
+
+  // x86-64, PUSH 명령어에 의한 경우를 제외하고 스택 포인터를 벗어난 접근
+  if (addr < rsp - 8) return false;
+
+  return true;
+}
+
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static void vm_stack_growth(void *addr UNUSED) {
+  void *upage = pg_round_down(addr);
+
+  vm_alloc_page(VM_ANON | VM_MARKER_0, upage, true);
+}
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {}
@@ -194,6 +218,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
                          bool not_present UNUSED) {
   struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
   struct page *page = NULL;
+  void *rsp = user ? f->rsp : thread_current()->user_rsp;
+
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
   // 잘못된 주소 접근
@@ -203,9 +229,16 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   if (!not_present) return false;
 
   // spt에서 가상 주소 addr이 포함된 페이지 찾기
-  // stack growth 미고려
   page = spt_find_page(spt, addr);
-  if (page == NULL) return false;
+  if (page == NULL) {
+    if (is_stack_addr(addr, rsp)) {
+      vm_stack_growth(addr);
+      page = spt_find_page(spt, addr);
+      ASSERT(page != NULL);
+    } else {
+      return false;
+    }
+  }
 
   // writing read-only page (not_present page 매핑 이후 확인)
   if (write && !page->writable) return false;
@@ -294,21 +327,22 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
         return false;
       }
 
-      aux_dst->file = file_reopen(aux_src->file);
-      if (aux_dst->file == NULL) {
-        free(aux_dst);
-        supplemental_page_table_kill(dst);
-        return false;
+      enum vm_type t = p->uninit.type;
+      *aux_dst = *aux_src;
+      if (VM_TYPE(t) == VM_FILE) {
+        aux_dst->file = file_reopen(aux_src->file);
+        if (aux_dst->file == NULL) {
+          free(aux_dst);
+          supplemental_page_table_kill(dst);
+          return false;
+        }
       }
 
-      aux_dst->ofs = aux_src->ofs;
-      aux_dst->read_bytes = aux_src->read_bytes;
-      aux_dst->zero_bytes = aux_src->zero_bytes;
-      aux_dst->writable = aux_src->writable;
-
-      if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, p->uninit.init,
+      if (!vm_alloc_page_with_initializer(t, va, writable, p->uninit.init,
                                           aux_dst)) {
-        file_close(aux_dst->file);
+        if (VM_TYPE(t) == VM_FILE && aux_dst->file != NULL) {
+          file_close(aux_dst->file);
+        }
         free(aux_dst);
         supplemental_page_table_kill(dst);
         return false;
@@ -331,17 +365,58 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
 
       struct page *child_p = spt_find_page(dst, va);
       memcpy(child_p->frame->kva, p->frame->kva, PGSIZE);
+    } else if (page_get_type(p) == VM_FILE) {
+      /* 3) 원본이 이미 적재된 FILE */
+
+      struct segment_aux *aux = malloc(sizeof *aux);
+      if (aux == NULL) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+      printf("spt_copy(): %p\n", p->file.file);
+
+      // aux deep copy (핸들은 reopen)
+      aux->file = file_reopen(p->file.file);  // 독립 핸들
+      aux->ofs = p->file.ofs;
+      aux->read_bytes = p->file.read_bytes;
+      aux->zero_bytes = p->file.zero_bytes;
+      aux->writable = writable;
+      if (aux->file == NULL) {
+        free(aux);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      // 자식 SPT에 UNINIT + file_backed_initializer로 등록
+      if (!vm_alloc_page_with_initializer(VM_FILE, va, writable,
+                                          lazy_load_segment, aux)) {
+        file_close(aux->file);
+        free(aux);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      continue;
     } else {
-      // 지금 단계 (FILE/swap 미지원): 해당 타입 안 나와야 함
-      ASSERT(false);
+      supplemental_page_table_kill(dst);
+      return false;
     }
   }
 
   return true;
 }
 
+void hash_action_destroy(struct hash_elem *e, void *aux UNUSED) {
+  ASSERT(e != NULL);
+  struct page *page = hash_entry(e, struct page, hash_elem);
+  ASSERT(page != NULL);
+  vm_dealloc_page(page);
+}
+
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
   /* TODO: Destroy all the supplemental_page_table hold by thread and
    * TODO: writeback all the modified contents to the storage. */
+  ASSERT(spt);
+  hash_clear(&spt->page_map, hash_action_destroy);
 }
