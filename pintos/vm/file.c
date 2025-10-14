@@ -47,7 +47,7 @@ file_backed_swap_out (struct page *page) {
 
   bool is_dirty = pml4_is_dirty(page->owner->pml4, page->va);
   if(is_dirty){
-    off_t rewrite_file = file_write_at(file_page->file, page->frame, file_page->read_bytes, file_page->ofs);
+    off_t rewrite_file = file_write_at(file_page->file, page->frame->kva, file_page->read_bytes, file_page->ofs);
     if(rewrite_file != file_page->read_bytes) return false;
   }
   do_munmap(page->vma);
