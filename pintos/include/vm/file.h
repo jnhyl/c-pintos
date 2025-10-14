@@ -1,4 +1,4 @@
-#ifndef VM_FILE_Hoffset
+#ifndef VM_FILE_H
 #define VM_FILE_H
 #include "filesys/file.h"
 #include "vm/vm.h"
