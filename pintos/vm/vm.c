@@ -4,9 +4,16 @@
 
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "userprog/process.h"
 #include "vm/anon.h"
 #include "vm/file.h"
 #include "vm/inspect.h"
+
+// 프레임테이블, 카운트와 인덱스 전역 선언
+#define FRAME_TABLE_SIZE 6144
+static struct frame *frame_table[FRAME_TABLE_SIZE];
+static size_t frame_count = 0;
+static size_t clock_hand = 0;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -141,25 +148,49 @@ bool spt_insert_page(struct supplemental_page_table *spt, struct page *page) {
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
+  ASSERT(spt && page);
+  hash_delete(&spt->page_map, &page->hash_elem);
   vm_dealloc_page(page);
-  return true;
+  return;
 }
 
 /* Get the struct frame, that will be evicted. */
 static struct frame *vm_get_victim(void) {
-  struct frame *victim = NULL;
-  /* TODO: The policy for eviction is up to you. */
+  while (true) {
+    struct frame *victim = frame_table[clock_hand];
 
-  return victim;
+    // page 설정 시까지 시간차 존재, 혹시 모를 예외처리
+    ASSERT(victim != NULL);
+    ASSERT(victim->page != NULL);
+
+    // accessed bit 확인하고 1이면 0으로 변경
+    if (pml4_is_accessed(victim->page->owner->pml4, victim->page->va)) {
+      pml4_set_accessed(victim->page->owner->pml4, victim->page->va, false);
+    } else {
+      return victim;
+    }
+
+    clock_hand = (clock_hand + 1) % frame_count;
+  }
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
 static struct frame *vm_evict_frame(void) {
-  struct frame *victim UNUSED = vm_get_victim();
-  /* TODO: swap out the victim and return the evicted frame. */
+  struct frame *victim = vm_get_victim();
 
-  return NULL;
+  // 스왑 아웃
+  swap_out(victim->page);
+
+  // 페이지 테이블 매핑 제거
+  pml4_clear_page(victim->page->owner->pml4, victim->page->va);
+
+  // 연결 끊기
+  victim->page->frame = NULL;
+  victim->page = NULL;
+
+  // frame은 빈 상태로, 재활용 가능
+  return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -168,22 +199,49 @@ static struct frame *vm_evict_frame(void) {
  * space.*/
 static struct frame *vm_get_frame(void) {
   void *kva = palloc_get_page(PAL_USER);
+
   if (kva == NULL) {
-    PANIC("TODO: Implement frame eviction");
+    return vm_evict_frame();
   }
-  /* TODO: palloc 실패 시 처리 */
 
   struct frame *frame = malloc(sizeof(struct frame));
+  if (frame == NULL) {
+    palloc_free_page(kva);
+    return NULL;
+  }
+
   frame->kva = kva;
   frame->page = NULL;
 
-  ASSERT(frame != NULL);
-  ASSERT(frame->page == NULL);
+  ASSERT(frame_count < FRAME_TABLE_SIZE);
+  frame_table[frame_count++] = frame;
+
   return frame;
 }
 
+/* 스택 주소인지 체크 */
+bool is_stack_addr(void *addr, void *rsp) {
+  // 잘못된 주소(NULL, 커널 가상 주소) 접근
+  if (!addr || !is_user_vaddr(addr)) return false;
+
+  // 유저 스택 주소가 아닌 경우
+  if (addr >= USER_STACK) return false;
+
+  // 유저 스택 범위를 넘어간 경우(스택 오버 플로우)
+  if (pg_round_down(addr) < USER_STACK - MAX_STACK_SIZE) return false;
+
+  // x86-64, PUSH 명령어에 의한 경우를 제외하고 스택 포인터를 벗어난 접근
+  if (addr < rsp - 8) return false;
+
+  return true;
+}
+
 /* Growing the stack. */
-static void vm_stack_growth(void *addr UNUSED) {}
+static void vm_stack_growth(void *addr UNUSED) {
+  void *upage = pg_round_down(addr);
+
+  vm_alloc_page(VM_ANON | VM_MARKER_0, upage, true);
+}
 
 /* Handle the fault on write_protected page */
 static bool vm_handle_wp(struct page *page UNUSED) {}
@@ -194,6 +252,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
                          bool not_present UNUSED) {
   struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
   struct page *page = NULL;
+  void *rsp = user ? f->rsp : thread_current()->user_rsp;
+
   /* TODO: Validate the fault */
   /* TODO: Your code goes here */
   // 잘못된 주소 접근
@@ -203,9 +263,16 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
   if (!not_present) return false;
 
   // spt에서 가상 주소 addr이 포함된 페이지 찾기
-  // stack growth 미고려
   page = spt_find_page(spt, addr);
-  if (page == NULL) return false;
+  if (page == NULL) {
+    if (is_stack_addr(addr, rsp)) {
+      vm_stack_growth(addr);
+      page = spt_find_page(spt, addr);
+      ASSERT(page != NULL);
+    } else {
+      return false;
+    }
+  }
 
   // writing read-only page (not_present page 매핑 이후 확인)
   if (write && !page->writable) return false;
@@ -270,10 +337,87 @@ void supplemental_page_table_init(struct supplemental_page_table *spt) {
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-                                  struct supplemental_page_table *src UNUSED) {}
+                                  struct supplemental_page_table *src UNUSED) {
+  supplemental_page_table_init(dst);
+
+  struct hash_iterator it;
+  hash_first(&it, &src->page_map);
+  while (hash_next(&it)) {
+    struct hash_elem *e = hash_cur(&it);
+    struct page *p = hash_entry(e, struct page, hash_elem);
+
+    void *va = p->va;
+    bool writable = p->writable;
+
+    if (page_get_type(p) == VM_FILE) {
+      continue;
+    }
+
+    if (VM_TYPE(p->operations->type) == VM_UNINIT) {
+      /* 1) UNINIT Page */
+
+      struct segment_aux *aux_src = p->uninit.aux;
+
+      /* aux 깊은 복사 */
+      struct segment_aux *aux_dst = malloc(sizeof *aux_dst);
+      if (aux_dst == NULL) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      enum vm_type t = p->uninit.type;
+      *aux_dst = *aux_src;
+      if (VM_TYPE(t) == VM_FILE) {
+        continue;
+      }
+
+      if (!vm_alloc_page_with_initializer(t, va, writable, p->uninit.init,
+                                          aux_dst)) {
+        if (VM_TYPE(t) == VM_FILE && aux_dst->file != NULL) {
+          file_close(aux_dst->file);
+        }
+        free(aux_dst);
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+    } else if (page_get_type(p) == VM_ANON) {
+      /* 2) 이미 적재된 ANON 페이지 */
+
+      /* 부모가 swap/evict 미구현 단계라면 frame은 있어야 정상 */
+      ASSERT(p->frame != NULL);
+
+      if (!vm_alloc_page_with_initializer(VM_ANON, va, writable, NULL, NULL)) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      if (!vm_claim_page(va)) {
+        supplemental_page_table_kill(dst);
+        return false;
+      }
+
+      struct page *child_p = spt_find_page(dst, va);
+      memcpy(child_p->frame->kva, p->frame->kva, PGSIZE);
+    } else {
+      supplemental_page_table_kill(dst);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void hash_action_destroy(struct hash_elem *e, void *aux UNUSED) {
+  ASSERT(e != NULL);
+  struct page *page = hash_entry(e, struct page, hash_elem);
+  ASSERT(page != NULL);
+  vm_dealloc_page(page);
+}
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
   /* TODO: Destroy all the supplemental_page_table hold by thread and
    * TODO: writeback all the modified contents to the storage. */
+  ASSERT(spt);
+  hash_clear(&spt->page_map, hash_action_destroy);
 }

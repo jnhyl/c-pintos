@@ -386,6 +386,10 @@ int process_exec(void* f_name) {
   // 2.4) 인자 전달 (스택은 load 함수에서 이미 설정됨)
   setup_arguments(&_if, argc, argv);
 
+#ifdef VM
+  thread_current()->user_rsp = _if.rsp;
+#endif
+
   /* 메모리 해제 : file_name 메모리 해제 */
   // palloc_free_page(file_name);
   palloc_free_page(file_name_cpy);
@@ -579,10 +583,11 @@ static bool load(const char* file_name, struct intr_frame* if_) {
 
   /* Allocate and activate page directory. */
   t->pml4 = pml4_create();
-  if (t->pml4 == NULL) goto done;
+  if (t->pml4 == NULL) return success;
   process_activate(thread_current());
 
   /* Open executable file. */
+  lock_acquire(&filesys_lock);
   file = filesys_open(file_name);
   if (file == NULL) {
     printf("load: %s: open failed\n", file_name);
@@ -653,8 +658,18 @@ static bool load(const char* file_name, struct intr_frame* if_) {
     }
   }
 
+  // filesys_lock 해제(성공 시)
+  lock_release(&filesys_lock);
+
   /* Set up stack. */
-  if (!setup_stack(if_)) goto done;
+  if (!setup_stack(if_)) {
+    lock_acquire(&filesys_lock);
+    file_allow_write(file);
+    file_close(file);
+    lock_release(&filesys_lock);
+    t->running_file = NULL;
+    return success;
+  }
 
   /* Start address. */
   if_->rip = ehdr.e_entry;
@@ -663,6 +678,7 @@ static bool load(const char* file_name, struct intr_frame* if_) {
    * TODO: Implement argument passing (see project2/argument_passing.html). */
 
   success = true;
+  return success;
 
 done:
   /* We arrive here whether the load is successful or not. */
@@ -672,6 +688,9 @@ done:
     file_close(file);
     t->running_file = NULL;
   }
+
+  // filesys_lock 해제(실패 시)
+  lock_release(&filesys_lock);
 
   return success;
 }
@@ -812,7 +831,8 @@ static bool install_page(void* upage, void* kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool lazy_load_segment(struct page* page, void* aux) {
+// static bool lazy_load_segment(struct page* page, void* aux) {
+bool lazy_load_segment(struct page* page, void* aux) {
   ASSERT(page != NULL);
   ASSERT(page->frame != NULL);
   ASSERT(aux != NULL);
@@ -824,25 +844,17 @@ static bool lazy_load_segment(struct page* page, void* aux) {
   if (aux_->read_bytes > 0) {
     int n = file_read_at(aux_->file, kva, aux_->read_bytes, aux_->ofs);
     if (n != (int)aux_->read_bytes) {
-      if (aux_->file) {
-        file_close(aux_->file);
-      }
-      free(aux);
+      free(aux_);
       return false;
     }
   }
 
-  /* 남은 영역 0으로 채우기 */
   if (aux_->zero_bytes > 0) {
     memset(kva + aux_->read_bytes, 0, aux_->zero_bytes);
   }
 
   /* 이 페이지 전용 자원 정리 */
-  if (aux_->file) {
-    file_close(aux_->file);
-  }
-  free(aux);
-
+  free(aux_);
   return true;
 }
 
@@ -879,23 +891,15 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage,
     if (aux == NULL) {
       return false;
     }
-
-    aux->file =
-        file_reopen(file);  // 각 페이지가 자기 핸들 보유 (해제 책임도 각자)
+    aux->file = file;
     aux->ofs = ofs;
     aux->read_bytes = page_read_bytes;
     aux->zero_bytes = page_zero_bytes;
     aux->writable = writable;
 
-    if (aux->file == NULL) {
-      free(aux);
-      return false;
-    }
-
     /* UNINIT 엔트리 등록 */
     if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable,
                                         lazy_load_segment, aux)) {
-      file_close(aux->file);
       free(aux);
       return false;
     }
